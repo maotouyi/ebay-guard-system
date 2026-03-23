@@ -1,0 +1,35 @@
+# ==========================================
+# 🦅 eBay Sleep Guard - 核心过滤清单
+# ==========================================
+
+# 1. 核心机密与私域数据 (绝对不能提交！)
+backend/.env
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/*.sqlite3
+
+# 2. 爬虫引擎产生的尸体文件 (排错用的 HTML)
+debug_html_*.html
+error_akamai_*.html
+*.log
+
+# 3. Python 后端运行环境与缓存
+backend/venv/
+backend/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+alembic/versions/*
+
+# 4. Vue 前端黑洞与打包产物
+frontend-console/node_modules/
+frontend-console/dist/
+frontend-console/.npm/
+npm-debug.log*
+yarn-error.log*
+
+# 5. 编辑器与系统垃圾
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
