@@ -1,5 +1,5 @@
 import { createApp } from 'vue'
-import './style.css' // 或者 tailwind.css
+import './style.css' // 这句是让样式生效的灵魂
 import App from './App.vue'
 import router from './router'
 
