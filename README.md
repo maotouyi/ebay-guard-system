@@ -65,3 +65,59 @@
 
 ---
 
+# eBay Guard System (重构版)
+
+全新 FastAPI + 异步 SQLAlchemy + APScheduler 重构版
+
+## 启动方式（开发）
+
+```bash
+cd backend
+cp .env.example .env
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+ebay-guard-system/                  ← 项目根目录（全新重构版）
+├── backend/                        ← 后端专业结构
+│   ├── __init__.py
+│   ├── main.py                     # FastAPI 入口 + lifespan + 路由注册
+│   ├── config.py                   # Pydantic Settings + .env
+│   ├── database.py                 # 异步 SQLAlchemy + WAL
+│   ├── models.py                   # ORM 模型（Client / Task / AlertLog）
+│   ├── schemas.py                  # Pydantic 验证模型
+│   ├── utils/
+│   │   └── logger.py               # 结构化日志配置
+│   ├── routers/
+│   │   ├── __init__.py
+│   │   ├── clients.py              # 客户 CRUD
+│   │   ├── tasks.py                # 任务 CRUD + 新增 refresh 触发
+│   │   ├── alerts.py               # 警报相关
+│   │   └── audit.py                # 审计日志
+│   ├── scheduler/                  # ← 本模块（调度器 & Worker）
+│   │   ├── __init__.py
+│   │   ├── scheduler.py            # APScheduler 核心
+│   │   └── worker.py               # 独立 Worker 进程入口
+│   ├── crawler/                     # 下一步模块（爬虫引擎）
+│   │   ├── __init__.py
+│   │   ├── engine.py
+│   │   └── rules.py
+│   ├── alerts/                     # 下一步模块（多通道通知）
+│   │   ├── __init__.py
+│   │   └── notifier.py
+│   ├── services/                   # 业务逻辑层（未来拆分复杂逻辑）
+│   ├── tests/                      # 单元测试目录
+│   ├── .env.example
+│   └── requirements.txt            # 统一依赖
+├── frontend-console/               ← 前端（暂保持原 Vue 结构，后续模块再重构组件/ stores）
+│   ├── public/
+│   ├── src/
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.js
+├── docker/                         # 新增 Docker 专业部署
+│   ├── Dockerfile.backend
+│   ├── Dockerfile.frontend
+│   └── docker-compose.yml          # 一键启动 API + Worker + Frontend
+├── README.md                       # 更新为重构版说明
+├── .gitignore
+└── .env.example                    # 根目录环境变量模板

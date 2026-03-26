@@ -1,13 +1,28 @@
+# backend/scraper/engine_item.py
 import re
 import json
 import os
+import time
+import random
 from curl_cffi import requests
 from core.config import settings
 
+def fetch_item_details(
+    item_id: str,
+    proxy_url: str = None,
+    target_zipcode: str = None
+) -> dict:
+    """
+    eBay单个Item完整抓取引擎（V1.5优化版）
+    支持：价格防卫线、下架检测、Best Offer、库存
+    特征：Chrome120指纹 + ZipCode强注入 + 随机delay + 多层解析兜底
+    """
+    if target_zipcode is None:
+        target_zipcode = settings.TARGET_ZIPCODE
 
-def fetch_item_details(item_id: str, proxy_url: str = None, target_zipcode: str = "90001"):
     print(f"[*] 🎯 锁定目标: Item {item_id} | 注入邮编: {target_zipcode}")
 
+    # ZipCode注入Cookie（eBay核心本地化方式）
     local_cookies = {
         "dp1": f"bpbf/%23{target_zipcode}^pz/{target_zipcode}^"
     }
@@ -32,12 +47,15 @@ def fetch_item_details(item_id: str, proxy_url: str = None, target_zipcode: str 
     url = f"https://www.ebay.com/itm/{item_id}"
 
     try:
+        # 随机delay防风控（1-3秒）
+        time.sleep(random.uniform(1.0, 3.0))
+
         response = session.get(url, timeout=25, allow_redirects=True)
         html = response.text
 
-        # 拦截检测
+        # 风控拦截检测
         if "Pardon Our Interruption" in html or "captcha" in html.lower() or response.status_code in (403, 429):
-            print("[-] 🛑 致命拦截：Akamai / Cloudflare 风控！建议换代理或等 5-10 分钟")
+            print("[-] 🛑 致命拦截：Akamai / Cloudflare 风控！建议换代理或等待5-10分钟")
             return None
 
         if response.status_code == 404:
@@ -60,7 +78,7 @@ def fetch_item_details(item_id: str, proxy_url: str = None, target_zipcode: str 
             "best_offer": False
         }
 
-        # ================== 第一层：旧 JSON-LD（保留兼容） ==================
+        # 第一层：JSON-LD（最可靠）
         json_blocks = re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL | re.IGNORECASE)
         for block in json_blocks:
             try:
@@ -90,7 +108,7 @@ def fetch_item_details(item_id: str, proxy_url: str = None, target_zipcode: str 
             except:
                 continue
 
-        # ================== 第二层：Meta 标签兜底 ==================
+        # 第二层：Meta标签兜底
         if item_data["price"] == 0.0 or item_data["title"] == "Unknown":
             title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
             if title_match:
@@ -107,48 +125,44 @@ def fetch_item_details(item_id: str, proxy_url: str = None, target_zipcode: str 
             if item_data["price"] > 0:
                 item_data["extraction_method"] = "Layer 2 (Meta Tags)"
 
-        # ================== 第三层：旧 class 暴力抓取 ==================
+        # 第三层：旧class暴力抓取
         if item_data["price"] == 0.0:
             raw_price_match = re.search(r'class="x-price-primary"[^>]*>\$?([\d,\.]+)</', html)
             if raw_price_match:
                 item_data["price"] = float(raw_price_match.group(1).replace(',', ''))
                 item_data["extraction_method"] = "Layer 3 (Old x-price-primary)"
 
-        # ================== 第四层：2026 新结构纯文本终极兜底（最关键！） ==================
+        # 第四层：2026纯文本终极兜底（最稳）
         if item_data["price"] == 0.0:
-            # 优先匹配 "US $99.99/ea or Best Offer"
             price_match = re.search(r'US \$?([\d,]+\.?\d*)', html)
             if not price_match:
-                price_match = re.search(r'\$([\d,]+\.?\d*)', html)  # 纯 $ 兜底
-
+                price_match = re.search(r'\$([\d,]+\.?\d*)', html)
             if price_match:
                 clean_price = price_match.group(1).replace(',', '')
                 item_data["price"] = float(clean_price)
                 item_data["currency"] = "USD"
                 item_data["extraction_method"] = "Layer 4 (Plain Text - 2026 最稳)"
 
-                # 是否支持 Best Offer
                 if "Best Offer" in html or "best offer" in html.lower():
                     item_data["best_offer"] = True
 
-        # ================== 标题最终兜底 ==================
+        # 标题最终兜底
         if item_data["title"] == "Unknown":
             title_match = re.search(r'<title>(.+?)\s*\|\s*eBay', html)
             if title_match:
                 item_data["title"] = title_match.group(1).strip()
 
-        # ================== 图片最终兜底（大图优先） ==================
+        # 图片最终兜底
         if not item_data["image"]:
             img_match = re.search(r'(https?://i\.ebayimg\.com/[^"\']+\.(?:jpg|png|webp))', html, re.IGNORECASE)
             if img_match:
                 item_data["image"] = img_match.group(1)
 
-        # ================== 卖家 & 库存提取 ==================
+        # 卖家 & 库存
         seller_match = re.search(r'seller(?:\s*[:|])\s*([^<"\n]+)', html, re.IGNORECASE)
         if seller_match:
             item_data["seller"] = seller_match.group(1).strip()
 
-        # 库存判断
         if re.search(r'(out of stock|sold out|0 available)', html, re.IGNORECASE):
             item_data["in_stock"] = False
         else:
@@ -157,33 +171,17 @@ def fetch_item_details(item_id: str, proxy_url: str = None, target_zipcode: str 
                 item_data["available_qty"] = int(qty_match.group(1))
                 item_data["in_stock"] = item_data["available_qty"] > 0
 
-        # ================== 最终校验 ==================
+        # ================== 最终校验 & Debug ==================
         if item_data["price"] == 0.0:
-            print(f"[-] ⚠️ 四层装甲全部击穿！保存 debug_html_{item_id}.html")
-            with open(f"debug_html_{item_id}.html", "w", encoding="utf-8") as f:
-                f.write(html)
-            return None
+            print(f"[-] ⚠️ 四层解析全部击穿！已保存 debug_html_{item_id}.html 请检查")
+            debug_path = f"debug_html_{item_id}.html"
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(html[:50000])  # 避免文件过大
+            return {"status": "parse_failed", "item_id": item_id, "debug_file": debug_path}
 
-        print(f"[+] ✅ 成功捕获! [{item_data['extraction_method']}] "
-              f"价格: {item_data['price']} {item_data['currency']} | "
-              f"库存: {item_data['available_qty']} | "
-              f"标题: {item_data['title'][:50]}...")
-
+        print(f"[+] ✅ 抓取成功 | {item_data['extraction_method']} | 价格: ${item_data['price']}")
         return item_data
 
     except Exception as e:
-        print(f"[-] 💥 引擎故障: {e}")
+        print(f"[-] ❌ fetch_item_details 异常: {e}")
         return None
-
-
-if __name__ == "__main__":
-    test_item = "117044439320"
-    result = fetch_item_details(
-        item_id=test_item,
-        proxy_url=settings.PROXY_URL,
-        target_zipcode=settings.TARGET_ZIPCODE
-    )
-
-    if result:
-        print("\n=== 🎯 数据解剖完毕 ===")
-        print(json.dumps(result, indent=2, ensure_ascii=False))
